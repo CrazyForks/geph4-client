@@ -4,9 +4,6 @@ use derivative::Derivative;
 use geph5_broker_protocol::Credential;
 use geph5_client::{BridgeMode, ExitConstraint};
 
-use isocountry::CountryCode;
-use itertools::Itertools;
-
 use sillad::Pipe;
 use smol::Task;
 use smol_str::SmolStr;
@@ -69,11 +66,16 @@ impl ClientTunnel {
                 .join(format!("cache-{}.db", opt.auth.stdcode().hash())),
         );
         if let Some(exit) = opt.exit_server {
-            let vec = exit.split(['.', '-']).collect_vec();
-            let country = CountryCode::for_alpha2_caseless(vec[0]).unwrap();
-            let city = vec[1].to_string();
-            config.exit_constraint = ExitConstraint::CountryCity(country, city);
+            config.exit_constraint = ExitConstraint::Hostname(exit);
         }
+
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            if opt.vpn_mode.is_some() {
+                config.vpn = true;
+            }
+        }
+
         log::debug!("cache path: {:?}", config.cache);
         let client = geph5_client::Client::start(config);
         let handle = client.control_client();
@@ -91,7 +93,9 @@ impl ClientTunnel {
                         time: SystemTime::now(),
                         endpoint: conn.bridge.into(),
                         protocol: conn.protocol.into(),
-                        ping: Duration::from_millis(100),
+                        ping: Duration::from_secs_f64(
+                            handle.stat_num("ping".into()).await.unwrap(),
+                        ),
                         send_bytes: send_bytes as u64,
                         recv_bytes: recv_bytes as u64,
                     }),
